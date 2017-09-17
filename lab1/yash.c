@@ -1,7 +1,7 @@
 /*
 Name: Andrew Chau
 Lab: 1
-Last Edit: 8:01 PM 9/12/17
+Last Edit: 12:48 AM 9/17/17
 */
 
 #include <stdio.h>
@@ -12,13 +12,27 @@ Last Edit: 8:01 PM 9/12/17
 #include <sys/wait.h>
 #include <string.h>
 #include <fcntl.h>
+#include <stdbool.h>
 
 #define buffLength 2001
 
+//global vars
 int pipefd[2];
 int status, pid_ch1, pid_ch2, pid;
 char buff[buffLength];
 char* tokens[buffLength / 3];
+
+//job manager vars
+typedef struct job{
+	int pid;
+	bool running;
+	bool current;
+	char* argu;
+} job;
+
+job jobList[100];
+int numberOfJobs = 0;
+job job_default = {0, false, false, 0};
 
 static void sig_int(int signo) {
 //  printf("Sending signals to group:%d\n",pid_ch1); // group id is pid of first in pipeline
@@ -30,7 +44,80 @@ static void sig_tstp(int signo) {
   kill(-pid_ch1,SIGTSTP);
 }
 
+//displays a list of jobs 
+void displayJobs(){
+	int i;
+	for(i = 0; i < numberOfJobs; i++){
+		printf("[%i] ", i+1);
+		
+		if(jobList[i].current == true){
+			printf("+ ");
+		}else{
+			printf("- ");
+		}
 
+		if(jobList[i].running == true){
+			printf("Running   ");
+		}else{
+			printf("Stopped   ");
+		}
+
+		printf("%s\n", jobList[i].argu);
+	}
+}
+
+//used to make each job (to keep track of) and adds them to job list
+void createJob(){
+	char holder[2001];
+	int ctr = 1;
+	if(tokens[0] != NULL){
+		strcpy(holder, tokens[0]);
+	}
+	while(tokens[ctr] != NULL){
+		strcat(holder, " ");
+		strcat(holder, tokens[ctr]);
+		ctr++;
+	}
+	holder[ctr] = 0;
+
+	//find exact length of line
+	ctr = 0;
+	int len = 0;
+	while(holder[ctr]){
+		len++;
+		ctr++;
+	}
+
+	//make the job
+	jobList[numberOfJobs].running = true;
+	jobList[numberOfJobs].argu = (char*) malloc(len + 1);
+	strcpy(jobList[numberOfJobs].argu, holder);
+	numberOfJobs++;
+
+	jobList[numberOfJobs] = job_default;
+}
+
+//deletes a specific job given the pid
+void deleteJob(int id){
+	int ctr = 0;
+	bool found = false;
+	for(ctr = 0; ctr < numberOfJobs; ctr++){
+		//found pid, destroy job
+		if(jobList[ctr].pid == id){
+			free(jobList[ctr].argu);
+			found = true;
+		}
+		//shift everything up one
+		if(found){
+			jobList[ctr].pid = jobList[ctr + 1].pid;
+			jobList[ctr].running = jobList[ctr + 1].running;
+			jobList[ctr].current = jobList[ctr + 1].current;
+			jobList[ctr].argu = jobList[ctr + 1].argu;
+		}
+	}
+}
+
+//grabs tokens that are separated by a space, will ignore last instance of '&'
 void getTokens(){
 	if(feof(stdin)){
 		exit(0);
@@ -118,6 +205,7 @@ void fileRedir(){
 	}
 }
 
+//copies tokens from 'tokens' to dest
 void copyTokens(char** dest, int start, int stop){
 	int ctr = 0;
 	while(tokens[start] != NULL && start <= stop){
@@ -128,6 +216,7 @@ void copyTokens(char** dest, int start, int stop){
 	dest[ctr] = NULL;
 }
 
+//the shell program
 int shell(){
 	int status;
 	int counter;
@@ -276,6 +365,7 @@ int shell(){
 	return 1;
 }
 
+//runs the shell
 int main(void){
 	int status;
 
@@ -285,7 +375,7 @@ int main(void){
 		fileRedir();			//file redirect first
 		status = shell();
 		if(status != 1){
-			printf("something went wrong\n");
+			printf("something went wrong in shell\n");
 		}
 	} while(status);
 }
