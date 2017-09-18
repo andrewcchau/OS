@@ -184,7 +184,7 @@ void sigchld_handler(int signum){
 		pid = waitpid (WAIT_ANY, &status, WNOHANG);
 		if (pid < 0)
 		{
-			perror ("waitpid");
+		//	perror ("waitpid");
 			break;
 		}
 		if (pid == 0)
@@ -368,7 +368,7 @@ int shell(){
 					runningPid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
 
 					if(runningPid == -1){
-						perror("waitpid");
+						perror("waitpid c2");
 						exit(EXIT_FAILURE);
 					}
 
@@ -438,7 +438,7 @@ int shell(){
 			} 
 
 			if(runningPid == -1){
-				perror("waitpid");
+				perror("waitpid c1");
 				exit(EXIT_FAILURE);
 			}
 		}
