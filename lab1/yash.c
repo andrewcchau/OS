@@ -23,17 +23,21 @@ int status, pid_ch1, pid_ch2, pid, runningPid;
 char buff[buffLength];
 char* tokens[buffLength / 3];
 
+int savedSTDOUT, savedSTDIN, savedSTDERR;
+
 //job manager vars
 typedef struct job{
 	int pid;
+	int sisterPid;
 	bool running;
 	bool current;
+	bool background;
 	char* argu;
 } job;
 
 job jobList[100];
 int numberOfJobs = 0;
-job job_default = {0, false, false, 0};
+job job_default = {0, -1, false, false, false, 0};
 
 
 //============================================JOBS========================================
@@ -86,6 +90,7 @@ void createJob(){
 	jobList[numberOfJobs].running = true;
 	jobList[numberOfJobs].argu = (char*) malloc((len + 1)*sizeof(char));
 	strcpy(jobList[numberOfJobs].argu, holder);
+	jobList[numberOfJobs].sisterPid = -1;
 	numberOfJobs++;
 
 	jobList[numberOfJobs] = job_default;
@@ -97,16 +102,18 @@ void deleteJob(int id){
 	bool found = false;
 	for(ctr = 0; ctr < numberOfJobs; ctr++){
 		//found pid, destroy job
-		if(jobList[ctr].pid == id){
-			//print the done job
-			printf("\n[%i]", ctr + 1);
-			if(jobList[ctr].current == true){
-				printf("+ ");
-			}else{
-				printf("- ");
+		if((jobList[ctr].pid == id && jobList[ctr].sisterPid == -1) || jobList[ctr].sisterPid == id){
+			//print the done job if it was in the background
+			if(jobList[ctr].background == true){
+				printf("\n[%i]", ctr + 1);
+				if(jobList[ctr].current == true){
+					printf("+ ");
+				}else{
+					printf("- ");
+				}
+				printf("Done   %s\n", jobList[ctr].argu);
+				fflush(stdout);
 			}
-			printf("Done   %s\n", jobList[ctr].argu);
-			fflush(stdout);
 
 			//delete job
 			free(jobList[ctr].argu);
@@ -117,10 +124,12 @@ void deleteJob(int id){
 			jobList[ctr].pid = jobList[ctr + 1].pid;
 			jobList[ctr].running = jobList[ctr + 1].running;
 			jobList[ctr].current = jobList[ctr + 1].current;
+			jobList[ctr].background = jobList[ctr + 1].background;
+			jobList[ctr].sisterPid = jobList[ctr + 1].sisterPid;
 			jobList[ctr].argu = jobList[ctr + 1].argu;
 		}
 	}
-	if(numberOfJobs){
+	if(numberOfJobs && found){
 		numberOfJobs--;
 	}
 }
@@ -175,7 +184,7 @@ void sigchld_handler(int signum){
 		pid = waitpid (WAIT_ANY, &status, WNOHANG);
 		if (pid < 0)
 		{
-		//	perror ("waitpid");
+			perror ("waitpid");
 			break;
 		}
 		if (pid == 0)
@@ -198,8 +207,8 @@ void getTokens(){
 		printf("eof fail");				//should never print
 	}
 
-	//get rid of &
-	char* temp = strrchr(buff, '&');    
+	//get rid of new line
+	char* temp = strrchr(buff, '\n');    
 	if(temp != NULL){
 		*temp = 0;
 	}
@@ -281,6 +290,12 @@ void fileRedir(){
 	}
 }
 
+void reset(){
+	dup2(savedSTDERR, STDERR_FILENO);
+	dup2(savedSTDOUT, STDOUT_FILENO);
+	dup2(savedSTDIN, STDIN_FILENO);
+}
+
 //copies tokens from 'tokens' to dest
 void copyTokens(char** dest, int start, int stop){
 	int ctr = 0;
@@ -318,6 +333,7 @@ int shell(){
 	while(tokens[counter] != NULL){
 		if(strcmp(tokens[counter], "&") == 0){
 			background = 1;
+			jobList[numberOfJobs - 1].background = true;
 			tokens[counter] = NULL;
 		}else if(strcmp(tokens[counter], "|") == 0){
 			pipeLoc = counter;
@@ -342,6 +358,8 @@ int shell(){
 				close(pipefd[1]);
 				int count = 0;
 
+				jobList[numberOfJobs - 1].sisterPid = pid_ch2;
+
 				if(background){
 					jobList[numberOfJobs - 1].current = false;
 				}
@@ -363,6 +381,10 @@ int shell(){
 						count++;
 					} else if(WIFSTOPPED(status)){
 						count = 2;
+					}
+
+					if(count == 2 && strcmp(tokens[0], "jobs") != 0){
+						deleteJob(pid_ch2);
 					}
 				}
 
@@ -406,6 +428,12 @@ int shell(){
 				} else if (WIFSIGNALED(status)) {
 					//printf("child %d killed by signal %d\n", pid, WTERMSIG(status));
 					count++;
+				}else if(WIFSTOPPED(status)){
+					count++;
+				}
+
+				if(count == 1 && strcmp(tokens[0], "jobs") != 0){
+					deleteJob(pid_ch1);
 				}
 			} 
 
@@ -413,8 +441,6 @@ int shell(){
 				perror("waitpid");
 				exit(EXIT_FAILURE);
 			}
-
-
 		}
 	}else{
 		//child 1
@@ -449,6 +475,7 @@ int shell(){
 
 //runs the shell
 int main(void){
+	//setup
 	int status;
 	if(signal(SIGCHLD, sigchld_handler) == SIG_ERR)
 		printf("sigchld error\n");
@@ -456,6 +483,9 @@ int main(void){
 		printf("signal(SIGINT) error");
 	if (signal(SIGTSTP, sig_tstp) == SIG_ERR)
 		printf("signal(SIGTSTP) error");
+	savedSTDIN = dup(STDIN_FILENO);
+	savedSTDOUT = dup(STDOUT_FILENO);
+	savedSTDERR = dup(STDERR_FILENO);
 
 	do{
 		getTokens();
@@ -465,5 +495,10 @@ int main(void){
 		if(status != 1){
 			printf("something went wrong in shell\n");
 		}
+		reset();
 	} while(status);
+
+	close(savedSTDERR);
+	close(savedSTDOUT);
+	close(savedSTDIN);
 }
