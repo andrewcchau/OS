@@ -35,65 +35,14 @@ job jobList[100];
 int numberOfJobs = 0;
 job job_default = {0, false, false, 0};
 
-//quits the current foreground process (if one exists)
-//DOESN'T exit shell
-//DOESN'T print the process
-static void sig_int(int signo) {
-  	if(runningPid != 0){
-  		kill(-runningPid, SIGINT);
-  	}
-}
 
-static void sig_tstp(int signo) {
-//  printf("Sending SIGTSTP to group:%d\n",pid_ch1); // group id is pid of first in pipeline
-  //kill(-pid_ch1,SIGTSTP);
-	printf("eeeeeee\n");
-}
+//============================================JOBS========================================
 
-int markProcessStatus(int id, int status){
-	if(id > 0){
-		if(WIFSTOPPED(status)){
-			//process has stopped
-			printf("stopped proc\n");
-		}else{
-			//process is completed
-			printf("completed proc\n");
-			if(WIFSIGNALED(status)){
-				//process was terminated
-			}
-			return 0;
-		}
-		return -1;
-	}else if(id == 0 || errno == ECHILD){
-		return -1;
-	}else{
-		perror("waitpid");
-		return -1;
-	}
-}
-
-void sigchld_handler(int signum){
-	int pid, status, serrno;
-	serrno = errno;
-	while (1)
-	{
-		pid = waitpid (WAIT_ANY, &status, WNOHANG);
-		if (pid < 0)
-		{
-		//	perror ("waitpid");
-			break;
-		}
-		if (pid == 0)
-			break;
-		markProcessStatus(pid, status);
-	}
-	errno = serrno;
-}
 
 //displays a list of jobs 
 void displayJobs(){
 	int i;
-	for(i = 0; i < numberOfJobs + 1; i++){
+	for(i = 0; i < numberOfJobs; i++){
 		printf("[%i]", i+1);
 		
 		if(jobList[i].current == true){
@@ -149,6 +98,17 @@ void deleteJob(int id){
 	for(ctr = 0; ctr < numberOfJobs; ctr++){
 		//found pid, destroy job
 		if(jobList[ctr].pid == id){
+			//print the done job
+			printf("\n[%i]", ctr + 1);
+			if(jobList[ctr].current == true){
+				printf("+ ");
+			}else{
+				printf("- ");
+			}
+			printf("Done   %s\n", jobList[ctr].argu);
+			fflush(stdout);
+
+			//delete job
 			free(jobList[ctr].argu);
 			found = true;
 		}
@@ -164,6 +124,69 @@ void deleteJob(int id){
 		numberOfJobs--;
 	}
 }
+
+
+//=====================================SIGNALS===============================================
+
+//quits the current foreground process (if one exists)
+//DOESN'T exit shell
+//DOESN'T print the process
+static void sig_int(int signo) {
+  	if(pid_ch1 != 0){
+  		kill(-pid_ch1, SIGINT);
+  	}
+}
+
+//stops the current foreground process
+//DOESN'T print the process
+static void sig_tstp(int signo) {
+	if(pid_ch1 != 0){
+		kill(-pid_ch1, SIGTSTP);
+	}
+}
+
+int markProcessStatus(int id, int status){
+	if(id > 0){
+		if(WIFSTOPPED(status)){
+			//process has stopped
+
+		}else{
+			//process is completed
+			deleteJob(id);
+			if(WIFSIGNALED(status)){
+				//process was terminated
+			}
+			return 0;
+		}
+		return -1;
+	}else if(id == 0 || errno == ECHILD){
+		return -1;
+	}else{
+	//	perror("waitpid");
+		return -1;
+	}
+}
+
+void sigchld_handler(int signum){
+	int pid, status, serrno;
+	serrno = errno;
+	while (1)
+	{
+		pid = waitpid (WAIT_ANY, &status, WNOHANG);
+		if (pid < 0)
+		{
+		//	perror ("waitpid");
+			break;
+		}
+		if (pid == 0)
+			break;
+		markProcessStatus(pid, status);
+	}
+	errno = serrno;
+}
+
+//=================================================TOKENS=============================================
+
 
 //grabs tokens that are separated by a space, will ignore last instance of '&'
 void getTokens(){
@@ -318,6 +341,11 @@ int shell(){
 				close(pipefd[0]);
 				close(pipefd[1]);
 				int count = 0;
+
+				if(background){
+					jobList[numberOfJobs - 1].current = false;
+				}
+
 				while(count < 2 && !background){
 					runningPid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
 
@@ -333,6 +361,8 @@ int shell(){
 					} else if (WIFSIGNALED(status)) {
 						//printf("child %d killed by signal %d\n", pid, WTERMSIG(status));
 						count++;
+					} else if(WIFSTOPPED(status)){
+						count = 2;
 					}
 				}
 
@@ -363,6 +393,10 @@ int shell(){
 				waitpid(-1, &status, 0);
 			}*/
 
+			if(background){
+				jobList[numberOfJobs - 1].current = false;
+			}
+
 			while(count < 1 && !background) {
 				runningPid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
 
@@ -379,6 +413,8 @@ int shell(){
 				perror("waitpid");
 				exit(EXIT_FAILURE);
 			}
+
+
 		}
 	}else{
 		//child 1
