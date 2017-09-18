@@ -10,6 +10,7 @@ Last Edit: 12:48 AM 9/17/17
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/stat.h> //define S_IRUSR and S_IWUSR
 #include <string.h>
 #include <fcntl.h>
 #include <stdbool.h>
@@ -211,6 +212,11 @@ void getTokens(){
 	char* temp = strrchr(buff, '\n');    
 	if(temp != NULL){
 		*temp = 0;
+	}
+
+	//account for just hitting return
+	if(buff[0] == 0){
+		return;
 	}
 
 	//parse through tokens and store them
