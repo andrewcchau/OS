@@ -13,12 +13,13 @@ Last Edit: 12:48 AM 9/17/17
 #include <string.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <errno.h>
 
 #define buffLength 2001
 
 //global vars
 int pipefd[2];
-int status, pid_ch1, pid_ch2, pid;
+int status, pid_ch1, pid_ch2, pid, runningPid;
 char buff[buffLength];
 char* tokens[buffLength / 3];
 
@@ -34,21 +35,66 @@ job jobList[100];
 int numberOfJobs = 0;
 job job_default = {0, false, false, 0};
 
+//quits the current foreground process (if one exists)
+//DOESN'T exit shell
+//DOESN'T print the process
 static void sig_int(int signo) {
-//  printf("Sending signals to group:%d\n",pid_ch1); // group id is pid of first in pipeline
-  kill(-pid_ch1,SIGINT);
+  	if(runningPid != 0){
+  		kill(-runningPid, SIGINT);
+  	}
 }
 
 static void sig_tstp(int signo) {
 //  printf("Sending SIGTSTP to group:%d\n",pid_ch1); // group id is pid of first in pipeline
-  kill(-pid_ch1,SIGTSTP);
+  //kill(-pid_ch1,SIGTSTP);
+	printf("eeeeeee\n");
+}
+
+int markProcessStatus(int id, int status){
+	if(id > 0){
+		if(WIFSTOPPED(status)){
+			//process has stopped
+			printf("stopped proc\n");
+		}else{
+			//process is completed
+			printf("completed proc\n");
+			if(WIFSIGNALED(status)){
+				//process was terminated
+			}
+			return 0;
+		}
+		return -1;
+	}else if(id == 0 || errno == ECHILD){
+		return -1;
+	}else{
+		perror("waitpid");
+		return -1;
+	}
+}
+
+void sigchld_handler(int signum){
+	int pid, status, serrno;
+	serrno = errno;
+	while (1)
+	{
+		pid = waitpid (WAIT_ANY, &status, WNOHANG);
+		if (pid < 0)
+		{
+		//	perror ("waitpid");
+			break;
+		}
+		if (pid == 0)
+			break;
+		markProcessStatus(pid, status);
+	}
+	errno = serrno;
 }
 
 //displays a list of jobs 
 void displayJobs(){
 	int i;
-	for(i = 0; i < numberOfJobs; i++){
-		printf("[%i] ", i+1);
+	for(i = 0; i < numberOfJobs + 1; i++){
+		printf("[%i]", i+1);
 		
 		if(jobList[i].current == true){
 			printf("+ ");
@@ -78,7 +124,6 @@ void createJob(){
 		strcat(holder, tokens[ctr]);
 		ctr++;
 	}
-	holder[ctr] = 0;
 
 	//find exact length of line
 	ctr = 0;
@@ -90,7 +135,7 @@ void createJob(){
 
 	//make the job
 	jobList[numberOfJobs].running = true;
-	jobList[numberOfJobs].argu = (char*) malloc(len + 1);
+	jobList[numberOfJobs].argu = (char*) malloc((len + 1)*sizeof(char));
 	strcpy(jobList[numberOfJobs].argu, holder);
 	numberOfJobs++;
 
@@ -115,16 +160,20 @@ void deleteJob(int id){
 			jobList[ctr].argu = jobList[ctr + 1].argu;
 		}
 	}
+	if(numberOfJobs){
+		numberOfJobs--;
+	}
 }
 
 //grabs tokens that are separated by a space, will ignore last instance of '&'
 void getTokens(){
+	printf("# ");
+	fgets(buff, buffLength, stdin);
+
 	if(feof(stdin)){
 		exit(0);
 		printf("eof fail");				//should never print
 	}
-	printf("# ");
-	fgets(buff, buffLength, stdin);
 
 	//get rid of &
 	char* temp = strrchr(buff, '&');    
@@ -136,14 +185,15 @@ void getTokens(){
 	char* token = strtok(buff, " ");
 	int ctr = 0;
 	while(token != NULL){
-		/*if(strcmp(token, "&\n") == 0){
-			break;
-		}*/
 		tokens[ctr] = token;
 		token = strtok(NULL, " ");
 		ctr++;
 	}
 	tokens[ctr] = NULL;
+
+	if(strcmp(tokens[0],"jobs") != 0){
+		createJob();
+	}
 }
 
 //Used for debugging purposes. Displays tokens to the terminal
@@ -170,6 +220,9 @@ void shiftTokens(int place, int start){
 //redirects any input/output files as needed
 //removes redirect tokens for execvp later on
 void fileRedir(){
+	if(feof(stdin)){
+		exit(0);
+	}
 	int curr = 0; //current token
 	int changed = 0;
 	while(tokens[curr] != NULL){
@@ -218,6 +271,10 @@ void copyTokens(char** dest, int start, int stop){
 
 //the shell program
 int shell(){
+	if(feof(stdin)){
+		exit(0);
+	}
+
 	int status;
 	int counter;
 	int background = 0;
@@ -245,27 +302,26 @@ int shell(){
 		counter++;
 	}
 
+	
 	pid_ch1 = fork();
 	if(pid_ch1 > 0){
 		//parent
-		//printf("Child1 pid = %d\n", pid_ch1);
+		jobList[numberOfJobs - 1].pid = pid_ch1;
+		jobList[numberOfJobs - 1].current = true;
+
+
 		if(pipeLoc != 0){
 			pid_ch2 = fork();
 			if(pid_ch2 > 0){
-				//SIGNALS HERE (I think)
-				if (signal(SIGINT, sig_int) == SIG_ERR)
-					printf("signal(SIGINT) error");
-				if (signal(SIGTSTP, sig_tstp) == SIG_ERR)
-					printf("signal(SIGTSTP) error");
-
+				//parent
 				//close parent pipe
 				close(pipefd[0]);
 				close(pipefd[1]);
 				int count = 0;
 				while(count < 2 && !background){
-					pid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
-					
-					if(pid == -1){
+					runningPid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
+
+					if(runningPid == -1){
 						perror("waitpid");
 						exit(EXIT_FAILURE);
 					}
@@ -277,12 +333,6 @@ int shell(){
 					} else if (WIFSIGNALED(status)) {
 						//printf("child %d killed by signal %d\n", pid, WTERMSIG(status));
 						count++;
-					} else if (WIFSTOPPED(status)) {
-						printf("%d stopped by signal %d\n", pid,WSTOPSIG(status));
-						sleep(2); //sleep for 2 seconds before sending CONT
-						kill(pid,SIGCONT);
-					} else if (WIFCONTINUED(status)) {
-						printf("Continuing %d\n",pid);
 					}
 				}
 
@@ -304,6 +354,9 @@ int shell(){
 				}
 			}
 		}else{
+			if(feof(stdin)){
+				exit(0);
+			}
 			//parent
 			int count = 0;
 			/*if(background){
@@ -311,7 +364,7 @@ int shell(){
 			}*/
 
 			while(count < 1 && !background) {
-				pid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
+				runningPid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
 
 				if (WIFEXITED(status)) {
 					//printf("child %d exited (1), status=%d\n", pid, WEXITSTATUS(status));
@@ -319,22 +372,13 @@ int shell(){
 				} else if (WIFSIGNALED(status)) {
 					//printf("child %d killed by signal %d\n", pid, WTERMSIG(status));
 					count++;
-				} else if (WIFSTOPPED(status)) {
-					//printf("%d stopped by signal %d\n", pid,WSTOPSIG(status));
-					//sleep(4); //sleep for 4 seconds before sending CONT
-					//kill(pid,SIGCONT);
-				} else if (WIFCONTINUED(status)) {
-					//printf("Continuing %d\n",pid);
 				}
 			} 
 
-
-
-			if(pid == -1){
+			if(runningPid == -1){
 				perror("waitpid");
 				exit(EXIT_FAILURE);
 			}
-
 		}
 	}else{
 		//child 1
@@ -355,23 +399,31 @@ int shell(){
 			copyTokens(args, 0, buffLength / 10);
 		}
 
+		if(strcmp(tokens[0], "jobs") == 0){
+			displayJobs();
+		}
+
 		int ret = execvp(args[0], args);
-		tokens[0] = NULL;
 		if(ret != 0){
 			exit(0);	//exit to prevent grandchildren if token isn't valid command
 		}
 	}
-
 	return 1;
 }
 
 //runs the shell
 int main(void){
 	int status;
+	if(signal(SIGCHLD, sigchld_handler) == SIG_ERR)
+		printf("sigchld error\n");
+	if (signal(SIGINT, sig_int) == SIG_ERR)
+		printf("signal(SIGINT) error");
+	if (signal(SIGTSTP, sig_tstp) == SIG_ERR)
+		printf("signal(SIGTSTP) error");
 
 	do{
 		getTokens();
-		//displayTokens();
+//		displayTokens();
 		fileRedir();			//file redirect first
 		status = shell();
 		if(status != 1){
