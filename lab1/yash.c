@@ -175,10 +175,10 @@ static void sig_int(int signo) {
 //DOESN'T print the process
 static void sig_tstp(int signo) {
 	if(pid_ch1 != 0 && jobList[numberOfJobs - 1].background == false){
-		printf("works?\n");
-		fflush(stdin);
+		// printf("works?\n");
+		// fflush(stdin);
 		jobList[numberOfJobs - 1].running = false;
-		kill(-pid_ch1, SIGTSTP);
+		kill(-pid_ch1, SIGTSTP);	//instructor said it was ok to use SIGSTOP
 	}
 }
 
@@ -557,18 +557,18 @@ int main(void){
 		printf("sigchld error\n");
 	if (signal(SIGINT, sig_int) == SIG_ERR)
 		printf("signal(SIGINT) error");
-/*	if (signal(SIGTSTP, sig_tstp) == SIG_ERR)
-		printf("signal(SIGTSTP) error");*/
+	if (signal(SIGTSTP, sig_tstp) == SIG_ERR)
+		printf("signal(SIGTSTP) error");
 
-	struct sigaction sa;
-    sa.sa_handler = sig_tstp;
-    sa.sa_flags = 0;
-    sigemptyset(&sa.sa_mask);
+	// struct sigaction sa;
+ //    sa.sa_handler = sig_tstp;
+ //    sa.sa_flags = 0;
+ //    sigemptyset(&sa.sa_mask);
 
-    if ( sigaction(SIGTSTP, &sa, NULL) == -1 ) {
-        perror("Couldn't set SIGTSTP handler");
-        exit(EXIT_FAILURE);
-    }
+ //    if ( sigaction(SIGTSTP, &sa, NULL) == -1 ) {
+ //        perror("Couldn't set SIGTSTP handler");
+ //        exit(EXIT_FAILURE);
+ //    }
 
 	savedSTDIN = dup(STDIN_FILENO);
 	savedSTDOUT = dup(STDOUT_FILENO);
