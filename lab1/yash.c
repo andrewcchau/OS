@@ -23,6 +23,7 @@ int pipefd[2];
 int status, pid_ch1, pid_ch2, pid, runningPid;
 char buff[buffLength];
 char* tokens[buffLength / 3];
+bool recentlyStopped;
 
 int savedSTDOUT, savedSTDIN, savedSTDERR;
 
@@ -34,12 +35,13 @@ typedef struct job{
 	bool running;
 	bool current;
 	bool background;
+	bool passed;
 	char* argu;
 } job;
 
 job jobList[100];
 int numberOfJobs = 0;
-job job_default = {-1, -1, -1, false, false, false, 0};
+job job_default = {-1, -1, -1, false, false, false, false, 0};
 
 
 //============================================JOBS========================================
@@ -95,6 +97,7 @@ void createJob(){
 	jobList[numberOfJobs].sisterPid = -1;
 	jobList[numberOfJobs].current = true;
 	jobList[numberOfJobs].background = false;
+	jobList[numberOfJobs].passed = false;
 	if(numberOfJobs == 0){
 		jobList[numberOfJobs].jobNo = 1;
 	}else{
@@ -118,22 +121,27 @@ void deleteJob(int id){
 	bool found = false;
 	for(ctr = 0; ctr < numberOfJobs; ctr++){
 		//found pid, destroy job
-		if((jobList[ctr].pid == id && jobList[ctr].sisterPid == -1) || jobList[ctr].sisterPid == id){
-			//print the done job if it was in the background
-			if(jobList[ctr].background == true){
-				printf("\n[%i]", jobList[ctr].jobNo);
-				if(jobList[ctr].current == true){
-					printf("+ ");
-				}else{
-					printf("- ");
+		if((jobList[ctr].pid == id && (jobList[ctr].sisterPid == -1 || jobList[ctr].passed)) || jobList[ctr].sisterPid == id){
+			if(strstr(jobList[ctr].argu, "sleep") == 0 || jobList[ctr].passed || jobList[ctr].sisterPid == -1){	//checks for sleep piped into a command
+				//print the done job if it was in the background
+				if(jobList[ctr].background == true){
+					printf("\n[%i]", jobList[ctr].jobNo);
+					if(jobList[ctr].current == true){
+						printf("+ ");
+					}else{
+						printf("- ");
+					}
+					printf("Done      %s\n", jobList[ctr].argu);
+					fflush(stdout);
 				}
-				printf("Done      %s\n", jobList[ctr].argu);
-				fflush(stdout);
-			}
 
-			//delete job
-			free(jobList[ctr].argu);
-			found = true;
+				//delete job
+				free(jobList[ctr].argu);
+				found = true;
+			}else{	
+				//sleep was found at least once
+				jobList[ctr].passed = true;
+			}
 		}
 		//shift everything up one
 		if(found){
@@ -144,6 +152,7 @@ void deleteJob(int id){
 			jobList[ctr].sisterPid = jobList[ctr + 1].sisterPid;
 			jobList[ctr].argu = jobList[ctr + 1].argu;
 			jobList[ctr].jobNo = jobList[ctr + 1].jobNo;
+			jobList[ctr].passed = jobList[ctr + 1].passed;
 		}
 	}
 	if(numberOfJobs && found){
@@ -185,6 +194,7 @@ static void sig_tstp(int signo) {
 		// printf("works?\n");
 		// fflush(stdin);
 		jobList[numberOfJobs - 1].running = false;
+		recentlyStopped = true;
 		kill(-pid_ch1, SIGTSTP);	//instructor said it was ok to use SIGSTOP
 	}
 }
@@ -213,16 +223,18 @@ int markProcessStatus(int id, int status){
 void sigchld_handler(int signum){
 	int pid, status, serrno;
 	serrno = errno;
+	//printf("%i\n", signum);
 	// siginfo_t info;	//for waitid()
-	while (1)
+	while (!recentlyStopped)
 	{
-		// pid = waitid(P_ALL, -1, &info, WNOWAIT);
-		// status = 0;
 		pid = waitpid (WAIT_ANY, &status, WNOHANG);
-			// if(pid == 0){
-			// 	pid = info.si_pid;
-			// 	status = info.si_status;
-			// }
+		// pid = waitid(P_ALL, 0, &info, WNOWAIT);
+		// status = 0;
+		// if(pid == 0){
+		// 	pid = info.si_pid;
+		// 	status = info.si_status;
+		// }
+		// printf("%i\n", pid);
 		if (pid < 0)
 		{
 			perror ("waitpid handler");
@@ -272,6 +284,7 @@ void getTokens(){
 	if(strcmp(tokens[0],"jobs") != 0 && strcmp(tokens[0], "fg") != 0 && strcmp(tokens[0], "bg") != 0){
 		createJob();
 	}
+	recentlyStopped = false;
 }
 
 //Used for debugging purposes. Displays tokens to the terminal
@@ -430,7 +443,7 @@ int shell(){
 						//printf("child %d killed by signal %d\n", pid, WTERMSIG(status));
 						count++;
 					} else if(WIFSTOPPED(status)){
-						count = 2;
+						printf("stopped\n");
 					}
 
 					if(count == 2 && strcmp(tokens[0], "jobs") != 0 && strcmp(tokens[0], "fg") != 0 && strcmp(tokens[0], "bg") != 0){
@@ -473,7 +486,11 @@ int shell(){
 			if(strcmp(tokens[0], "fg") == 0){
 				if(numberOfJobs > 0){
 					proc = jobList[numberOfJobs - 1].pid;
-					kill(-proc, SIGCONT);
+					if(jobList[numberOfJobs - 1].sisterPid != -1){
+						kill(-proc, SIGCONT);
+					}else{
+						kill(proc, SIGCONT);
+					}
 					jobList[numberOfJobs - 1].running = true;
 					jobList[numberOfJobs - 1].current = true;
 					jobList[numberOfJobs - 1].background = false;
@@ -485,7 +502,11 @@ int shell(){
 				proc = findStoppedProc();
 				if(proc != -1){
 					printf("bg\n");
-					kill(-jobList[proc].pid, SIGCONT);
+					if(jobList[proc].sisterPid == -1){
+						kill(jobList[proc].pid, SIGCONT);
+					}else{
+						kill(-jobList[proc].pid, SIGCONT);
+					}
 					jobList[proc].running = true;
 					jobList[proc].background = true;
 					if(jobList[proc].argu != 0){
@@ -516,6 +537,7 @@ int shell(){
 					count++;
 				}else if (WIFSTOPPED(status)){
 					printf("should be stopped\n");
+					break;
 				}
 
 				if(count == 1 && strcmp(tokens[0], "jobs") != 0 && strcmp(tokens[0], "fg") != 0 && strcmp(tokens[0], "bg") != 0){
@@ -540,7 +562,8 @@ int shell(){
 		if(background){
 			setpgid(0,0);
 		}else{
-			setpgrp();
+			if(pipeLoc != 0)	//wacky method to resolve ctrl-z issues
+				setsid();
 		}
 		char* args[buffLength / 10];
 		if(pipeLoc != 0){
@@ -567,6 +590,7 @@ int shell(){
 int main(void){
 	//setup
 	int status;
+	recentlyStopped = false;
 	if(signal(SIGCHLD, sigchld_handler) == SIG_ERR)
 		printf("sigchld error\n");
 	if (signal(SIGINT, sig_int) == SIG_ERR)
