@@ -1,7 +1,7 @@
 /*
 Name: Andrew Chau
 Lab: 1
-Last Edit: 12:56 AM 9/19/17
+Last Edit: 4:43 PM 9/19/17
 */
 
 #include <stdio.h>
@@ -28,6 +28,7 @@ int savedSTDOUT, savedSTDIN, savedSTDERR;
 
 //job manager vars
 typedef struct job{
+	int jobNo;
 	int pid;
 	int sisterPid;
 	bool running;
@@ -38,7 +39,7 @@ typedef struct job{
 
 job jobList[100];
 int numberOfJobs = 0;
-job job_default = {-1, -1, false, false, false, 0};
+job job_default = {-1, -1, -1, false, false, false, 0};
 
 
 //============================================JOBS========================================
@@ -48,7 +49,7 @@ job job_default = {-1, -1, false, false, false, 0};
 void displayJobs(){
 	int i;
 	for(i = 0; i < numberOfJobs; i++){
-		printf("[%i]", i+1);
+		printf("[%i]", jobList[i].jobNo);
 		
 		if(jobList[i].current == true){
 			printf("+ ");
@@ -94,6 +95,11 @@ void createJob(){
 	jobList[numberOfJobs].sisterPid = -1;
 	jobList[numberOfJobs].current = true;
 	jobList[numberOfJobs].background = false;
+	if(numberOfJobs == 0){
+		jobList[numberOfJobs].jobNo = 1;
+	}else{
+		jobList[numberOfJobs].jobNo = jobList[numberOfJobs - 1].jobNo + 1;
+	}
 
 	//set other jobs to not be current
 	ctr = 0;
@@ -115,7 +121,7 @@ void deleteJob(int id){
 		if((jobList[ctr].pid == id && jobList[ctr].sisterPid == -1) || jobList[ctr].sisterPid == id){
 			//print the done job if it was in the background
 			if(jobList[ctr].background == true){
-				printf("\n[%i]", ctr + 1);
+				printf("\n[%i]", jobList[ctr].jobNo);
 				if(jobList[ctr].current == true){
 					printf("+ ");
 				}else{
@@ -137,6 +143,7 @@ void deleteJob(int id){
 			jobList[ctr].background = jobList[ctr + 1].background;
 			jobList[ctr].sisterPid = jobList[ctr + 1].sisterPid;
 			jobList[ctr].argu = jobList[ctr + 1].argu;
+			jobList[ctr].jobNo = jobList[ctr + 1].jobNo;
 		}
 	}
 	if(numberOfJobs && found){
@@ -206,12 +213,19 @@ int markProcessStatus(int id, int status){
 void sigchld_handler(int signum){
 	int pid, status, serrno;
 	serrno = errno;
+	// siginfo_t info;	//for waitid()
 	while (1)
 	{
+		// pid = waitid(P_ALL, -1, &info, WNOWAIT);
+		// status = 0;
 		pid = waitpid (WAIT_ANY, &status, WNOHANG);
+			// if(pid == 0){
+			// 	pid = info.si_pid;
+			// 	status = info.si_status;
+			// }
 		if (pid < 0)
 		{
-		//	perror ("waitpid");
+			perror ("waitpid handler");
 			break;
 		}
 		if (pid == 0)
@@ -464,7 +478,7 @@ int shell(){
 					jobList[numberOfJobs - 1].current = true;
 					jobList[numberOfJobs - 1].background = false;
 					if(jobList[numberOfJobs - 1].argu != NULL){
-						printf("[%i]+ Running   %s\n", numberOfJobs, jobList[numberOfJobs - 1].argu);
+						printf("[%i]+ Running   %s\n", jobList[numberOfJobs - 1].jobNo, jobList[numberOfJobs - 1].argu);
 					}
 				}
 			}else if(strcmp(tokens[0], "bg") == 0){
@@ -475,7 +489,7 @@ int shell(){
 					jobList[proc].running = true;
 					jobList[proc].background = true;
 					if(jobList[proc].argu != 0){
-						printf("[%i]", proc);
+						printf("[%i]", jobList[proc].jobNo);
 						if(jobList[proc].current == true){
 							printf("+ ");
 						}else{
@@ -501,7 +515,7 @@ int shell(){
 					//printf("child %d killed by signal %d\n", pid, WTERMSIG(status));
 					count++;
 				}else if (WIFSTOPPED(status)){
-					//printf("should be stopped\n");
+					printf("should be stopped\n");
 				}
 
 				if(count == 1 && strcmp(tokens[0], "jobs") != 0 && strcmp(tokens[0], "fg") != 0 && strcmp(tokens[0], "bg") != 0){
@@ -526,8 +540,7 @@ int shell(){
 		if(background){
 			setpgid(0,0);
 		}else{
-			if(pipeLoc != 0)	//funky hack to make ctrl-z work
-				setsid(); //child 1 creates new session & new group and becomes leader
+			setpgrp();
 		}
 		char* args[buffLength / 10];
 		if(pipeLoc != 0){
@@ -589,4 +602,6 @@ int main(void){
 	close(savedSTDERR);
 	close(savedSTDOUT);
 	close(savedSTDIN);
+
+	return 0;
 }

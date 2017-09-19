@@ -7,7 +7,7 @@ CC = gcc
 # compiler flags
 # -g      debugging info to executable
 # -Wall   turns on most compiler warnings (not used this time)
-CFLAGS = -g
+CFLAGS = -g -Wall
 
 # build target executable
 TARGET = yash
