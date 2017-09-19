@@ -62,7 +62,7 @@ void displayJobs(){
 			printf("Stopped   ");
 		}
 
-		printf("%s\n", jobList[i].argu);
+		printf("(%i) %s\n", jobList[i].pid, jobList[i].argu);
 	}
 }
 
@@ -92,8 +92,16 @@ void createJob(){
 	jobList[numberOfJobs].argu = (char*) malloc((len + 1)*sizeof(char));
 	strcpy(jobList[numberOfJobs].argu, holder);
 	jobList[numberOfJobs].sisterPid = -1;
-	numberOfJobs++;
+	jobList[numberOfJobs].current = true;
 
+	//set other jobs to not be current
+	ctr = 0;
+	for(ctr = 0; ctr < numberOfJobs; ctr++){
+		jobList[ctr].current = false;
+	}
+
+	//incr number of jobs
+	numberOfJobs++;
 	jobList[numberOfJobs] = job_default;
 }
 
@@ -112,7 +120,7 @@ void deleteJob(int id){
 				}else{
 					printf("- ");
 				}
-				printf("Done   %s\n", jobList[ctr].argu);
+				printf("Done      (%i) %s\n", jobList[ctr].pid, jobList[ctr].argu);
 				fflush(stdout);
 			}
 
@@ -132,6 +140,9 @@ void deleteJob(int id){
 	}
 	if(numberOfJobs && found){
 		numberOfJobs--;
+
+		//last job will be "current"
+		jobList[numberOfJobs - 1].current = true;
 	}
 }
 
@@ -152,6 +163,7 @@ static void sig_int(int signo) {
 static void sig_tstp(int signo) {
 	if(pid_ch1 != 0){
 		kill(-pid_ch1, SIGTSTP);
+		jobList[numberOfJobs - 1].running = false;
 	}
 }
 
@@ -229,7 +241,7 @@ void getTokens(){
 	}
 	tokens[ctr] = NULL;
 
-	if(strcmp(tokens[0],"jobs") != 0){
+	if(strcmp(tokens[0],"jobs") != 0 && strcmp(tokens[0], "fg") != 0 && strcmp(tokens[0], "bg") != 0){
 		createJob();
 	}
 }
@@ -351,8 +363,10 @@ int shell(){
 	pid_ch1 = fork();
 	if(pid_ch1 > 0){
 		//parent
-		jobList[numberOfJobs - 1].pid = pid_ch1;
-		jobList[numberOfJobs - 1].current = true;
+		if(strcmp(tokens[0], "jobs") != 0 && strcmp(tokens[0], "fg") != 0 && strcmp(tokens[0], "bg") != 0){
+			jobList[numberOfJobs - 1].pid = pid_ch1;
+			//jobList[numberOfJobs - 1].current = true;
+		}
 
 
 		if(pipeLoc != 0){
@@ -364,10 +378,12 @@ int shell(){
 				close(pipefd[1]);
 				int count = 0;
 
-				jobList[numberOfJobs - 1].sisterPid = pid_ch2;
+				if(strcmp(tokens[0], "jobs") != 0 && strcmp(tokens[0], "fg") != 0 && strcmp(tokens[0], "bg") != 0){
+					jobList[numberOfJobs - 1].sisterPid = pid_ch2;
+				}
 
 				if(background){
-					jobList[numberOfJobs - 1].current = false;
+					//jobList[numberOfJobs - 1].current = false;
 				}
 
 				while(count < 2 && !background){
@@ -389,7 +405,7 @@ int shell(){
 						count = 2;
 					}
 
-					if(count == 2 && strcmp(tokens[0], "jobs") != 0){
+					if(count == 2 && strcmp(tokens[0], "jobs") != 0 && strcmp(tokens[0], "fg") != 0 && strcmp(tokens[0], "bg") != 0){
 						deleteJob(pid_ch2);
 					}
 				}
@@ -417,16 +433,26 @@ int shell(){
 			}
 			//parent
 			int count = 0;
+			int proc = -1;
 			/*if(background){
 				waitpid(-1, &status, 0);
 			}*/
 
 			if(background){
-				jobList[numberOfJobs - 1].current = false;
+				//jobList[numberOfJobs - 1].current = false;
+			}
+
+			if(strcmp(tokens[0], "fg") == 0){
+				proc = jobList[numberOfJobs - 1].pid;
+				kill(-proc, SIGCONT);
+				jobList[numberOfJobs - 1].running = true;
+				jobList[numberOfJobs - 1].current = true;
+				jobList[numberOfJobs - 1].background = false;
+				printf("[%i]+ Running   %s\n", numberOfJobs, jobList[numberOfJobs - 1].argu);
 			}
 
 			while(count < 1 && !background) {
-				runningPid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
+				runningPid = waitpid(proc, &status, WUNTRACED | WCONTINUED);
 
 				if (WIFEXITED(status)) {
 					//printf("child %d exited (1), status=%d\n", pid, WEXITSTATUS(status));
@@ -438,8 +464,12 @@ int shell(){
 					count++;
 				}
 
-				if(count == 1 && strcmp(tokens[0], "jobs") != 0){
+				if(count == 1 && strcmp(tokens[0], "jobs") != 0 && strcmp(tokens[0], "bg") != 0){
 					deleteJob(pid_ch1);
+				}
+
+				if(proc != -1){
+					deleteJob(proc);
 				}
 			} 
 
@@ -469,6 +499,10 @@ int shell(){
 
 		if(strcmp(tokens[0], "jobs") == 0){
 			displayJobs();
+		}else if(strcmp(tokens[0], "bg") == 0){
+			kill(-jobList[numberOfJobs - 1].pid, SIGCONT);
+			jobList[numberOfJobs].running = true;
+			printf("[%i]+ Running   %s\n", numberOfJobs, jobList[numberOfJobs - 1].argu);
 		}
 
 		int ret = execvp(args[0], args);
