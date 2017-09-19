@@ -1,7 +1,7 @@
 /*
 Name: Andrew Chau
 Lab: 1
-Last Edit: 12:48 AM 9/17/17
+Last Edit: 12:56 AM 9/19/17
 */
 
 #include <stdio.h>
@@ -501,7 +501,7 @@ int shell(){
 					//printf("child %d killed by signal %d\n", pid, WTERMSIG(status));
 					count++;
 				}else if (WIFSTOPPED(status)){
-					printf("should be stopped\n");
+					//printf("should be stopped\n");
 				}
 
 				if(count == 1 && strcmp(tokens[0], "jobs") != 0 && strcmp(tokens[0], "fg") != 0 && strcmp(tokens[0], "bg") != 0){
@@ -526,7 +526,8 @@ int shell(){
 		if(background){
 			setpgid(0,0);
 		}else{
-			setsid(); //child 1 creates new session & new group and becomes leader
+			if(pipeLoc != 0)	//funky hack to make ctrl-z work
+				setsid(); //child 1 creates new session & new group and becomes leader
 		}
 		char* args[buffLength / 10];
 		if(pipeLoc != 0){
