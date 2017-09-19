@@ -38,7 +38,7 @@ typedef struct job{
 
 job jobList[100];
 int numberOfJobs = 0;
-job job_default = {0, -1, false, false, false, 0};
+job job_default = {-1, -1, false, false, false, 0};
 
 
 //============================================JOBS========================================
@@ -62,7 +62,7 @@ void displayJobs(){
 			printf("Stopped   ");
 		}
 
-		printf("(%i) %s\n", jobList[i].pid, jobList[i].argu);
+		printf("%s\n", jobList[i].argu);
 	}
 }
 
@@ -93,6 +93,7 @@ void createJob(){
 	strcpy(jobList[numberOfJobs].argu, holder);
 	jobList[numberOfJobs].sisterPid = -1;
 	jobList[numberOfJobs].current = true;
+	jobList[numberOfJobs].background = false;
 
 	//set other jobs to not be current
 	ctr = 0;
@@ -120,7 +121,7 @@ void deleteJob(int id){
 				}else{
 					printf("- ");
 				}
-				printf("Done      (%i) %s\n", jobList[ctr].pid, jobList[ctr].argu);
+				printf("Done      %s\n", jobList[ctr].argu);
 				fflush(stdout);
 			}
 
@@ -146,6 +147,18 @@ void deleteJob(int id){
 	}
 }
 
+//returns the index of the most recent stopped process, otherwise returns -1
+int findStoppedProc(){
+	int ctr;
+	for(ctr = numberOfJobs - 1; ctr >= 0; ctr--){
+		if(jobList[ctr].running == false){
+			return ctr;
+		}
+	}
+
+	return -1;
+}
+
 
 //=====================================SIGNALS===============================================
 
@@ -161,9 +174,11 @@ static void sig_int(int signo) {
 //stops the current foreground process
 //DOESN'T print the process
 static void sig_tstp(int signo) {
-	if(pid_ch1 != 0){
-		kill(-pid_ch1, SIGTSTP);
+	if(pid_ch1 != 0 && jobList[numberOfJobs - 1].background == false){
+		printf("works?\n");
+		fflush(stdin);
 		jobList[numberOfJobs - 1].running = false;
+		kill(-pid_ch1, SIGTSTP);
 	}
 }
 
@@ -171,7 +186,6 @@ int markProcessStatus(int id, int status){
 	if(id > 0){
 		if(WIFSTOPPED(status)){
 			//process has stopped
-
 		}else{
 			//process is completed
 			deleteJob(id);
@@ -443,12 +457,38 @@ int shell(){
 			}
 
 			if(strcmp(tokens[0], "fg") == 0){
-				proc = jobList[numberOfJobs - 1].pid;
-				kill(-proc, SIGCONT);
-				jobList[numberOfJobs - 1].running = true;
-				jobList[numberOfJobs - 1].current = true;
-				jobList[numberOfJobs - 1].background = false;
-				printf("[%i]+ Running   %s\n", numberOfJobs, jobList[numberOfJobs - 1].argu);
+				if(numberOfJobs > 0){
+					proc = jobList[numberOfJobs - 1].pid;
+					kill(-proc, SIGCONT);
+					jobList[numberOfJobs - 1].running = true;
+					jobList[numberOfJobs - 1].current = true;
+					jobList[numberOfJobs - 1].background = false;
+					if(jobList[numberOfJobs - 1].argu != NULL){
+						printf("[%i]+ Running   %s\n", numberOfJobs, jobList[numberOfJobs - 1].argu);
+					}
+				}
+			}else if(strcmp(tokens[0], "bg") == 0){
+				proc = findStoppedProc();
+				if(proc != -1){
+					printf("bg\n");
+					kill(-jobList[proc].pid, SIGCONT);
+					jobList[proc].running = true;
+					jobList[proc].background = true;
+					if(jobList[proc].argu != 0){
+						printf("[%i]", proc);
+						if(jobList[proc].current == true){
+							printf("+ ");
+						}else{
+							printf("- ");
+						}
+						printf("Running   %s\n", jobList[proc].argu);
+					}
+					background = true;
+				}
+			}
+
+			if(proc <= 0){
+				proc = -1;
 			}
 
 			while(count < 1 && !background) {
@@ -460,11 +500,11 @@ int shell(){
 				} else if (WIFSIGNALED(status)) {
 					//printf("child %d killed by signal %d\n", pid, WTERMSIG(status));
 					count++;
-				}else if(WIFSTOPPED(status)){
-					count++;
+				}else if (WIFSTOPPED(status)){
+					printf("should be stopped\n");
 				}
 
-				if(count == 1 && strcmp(tokens[0], "jobs") != 0 && strcmp(tokens[0], "bg") != 0){
+				if(count == 1 && strcmp(tokens[0], "jobs") != 0 && strcmp(tokens[0], "fg") != 0 && strcmp(tokens[0], "bg") != 0){
 					deleteJob(pid_ch1);
 				}
 
@@ -499,10 +539,6 @@ int shell(){
 
 		if(strcmp(tokens[0], "jobs") == 0){
 			displayJobs();
-		}else if(strcmp(tokens[0], "bg") == 0){
-			kill(-jobList[numberOfJobs - 1].pid, SIGCONT);
-			jobList[numberOfJobs].running = true;
-			printf("[%i]+ Running   %s\n", numberOfJobs, jobList[numberOfJobs - 1].argu);
 		}
 
 		int ret = execvp(args[0], args);
@@ -521,8 +557,19 @@ int main(void){
 		printf("sigchld error\n");
 	if (signal(SIGINT, sig_int) == SIG_ERR)
 		printf("signal(SIGINT) error");
-	if (signal(SIGTSTP, sig_tstp) == SIG_ERR)
-		printf("signal(SIGTSTP) error");
+/*	if (signal(SIGTSTP, sig_tstp) == SIG_ERR)
+		printf("signal(SIGTSTP) error");*/
+
+	struct sigaction sa;
+    sa.sa_handler = sig_tstp;
+    sa.sa_flags = 0;
+    sigemptyset(&sa.sa_mask);
+
+    if ( sigaction(SIGTSTP, &sa, NULL) == -1 ) {
+        perror("Couldn't set SIGTSTP handler");
+        exit(EXIT_FAILURE);
+    }
+
 	savedSTDIN = dup(STDIN_FILENO);
 	savedSTDOUT = dup(STDOUT_FILENO);
 	savedSTDERR = dup(STDERR_FILENO);
