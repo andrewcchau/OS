@@ -237,7 +237,7 @@ void sigchld_handler(int signum){
 		// printf("%i\n", pid);
 		if (pid < 0)
 		{
-			perror ("waitpid handler");
+			//perror ("waitpid handler");
 			break;
 		}
 		if (pid == 0)
@@ -423,10 +423,6 @@ int shell(){
 					jobList[numberOfJobs - 1].sisterPid = pid_ch2;
 				}
 
-				if(background){
-					//jobList[numberOfJobs - 1].current = false;
-				}
-
 				while(count < 2 && !background){
 					runningPid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
 
@@ -443,7 +439,7 @@ int shell(){
 						//printf("child %d killed by signal %d\n", pid, WTERMSIG(status));
 						count++;
 					} else if(WIFSTOPPED(status)){
-						printf("stopped\n");
+						break;
 					}
 
 					if(count == 2 && strcmp(tokens[0], "jobs") != 0 && strcmp(tokens[0], "fg") != 0 && strcmp(tokens[0], "bg") != 0){
@@ -475,13 +471,6 @@ int shell(){
 			//parent
 			int count = 0;
 			int proc = -1;
-			/*if(background){
-				waitpid(-1, &status, 0);
-			}*/
-
-			if(background){
-				//jobList[numberOfJobs - 1].current = false;
-			}
 
 			if(strcmp(tokens[0], "fg") == 0){
 				if(numberOfJobs > 0){
@@ -498,10 +487,10 @@ int shell(){
 						printf("[%i]+ Running   %s\n", jobList[numberOfJobs - 1].jobNo, jobList[numberOfJobs - 1].argu);
 					}
 				}
+				recentlyStopped = false;
 			}else if(strcmp(tokens[0], "bg") == 0){
 				proc = findStoppedProc();
 				if(proc != -1){
-					printf("bg\n");
 					if(jobList[proc].sisterPid == -1){
 						kill(jobList[proc].pid, SIGCONT);
 					}else{
@@ -520,6 +509,7 @@ int shell(){
 					}
 					background = true;
 				}
+				recentlyStopped = false;
 			}
 
 			if(proc <= 0){
@@ -536,7 +526,7 @@ int shell(){
 					//printf("child %d killed by signal %d\n", pid, WTERMSIG(status));
 					count++;
 				}else if (WIFSTOPPED(status)){
-					printf("should be stopped\n");
+				//	printf("should be stopped\n");
 					break;
 				}
 
