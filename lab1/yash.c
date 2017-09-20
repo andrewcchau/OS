@@ -122,7 +122,7 @@ void deleteJob(int id){
 	bool found = false;
 	for(ctr = 0; ctr < numberOfJobs; ctr++){
 		//found pid, destroy job
-		if((jobList[ctr].pid == id && (jobList[ctr].sisterPid == -1 || jobList[ctr].passed)) || jobList[ctr].sisterPid == id){
+		if(((jobList[ctr].pid == id && (jobList[ctr].sisterPid == -1 || jobList[ctr].passed)) || jobList[ctr].sisterPid == id) && !found){
 			if(strstr(jobList[ctr].argu, "sleep") == 0 || jobList[ctr].passed || jobList[ctr].sisterPid == -1 || deleteOverride){	//checks for sleep piped into a command
 				//print the done job if it was in the background
 				if(jobList[ctr].background == true){
@@ -137,7 +137,10 @@ void deleteJob(int id){
 				}
 
 				//delete job
-				free(jobList[ctr].argu);
+				if(jobList[ctr].argu != 0){
+					free(jobList[ctr].argu);
+					jobList[ctr].argu = 0;
+				}
 				found = true;
 				deleteOverride = false;
 			}else{	
@@ -157,7 +160,8 @@ void deleteJob(int id){
 			jobList[ctr].passed = jobList[ctr + 1].passed;
 		}
 	}
-	if(numberOfJobs && found){
+
+	if(numberOfJobs > 0 && found){
 		numberOfJobs--;
 
 		//last job will be "current"
@@ -196,8 +200,6 @@ static void sig_tstp(int signo) {
 	if(pid_ch1 != 0 && jobList[numberOfJobs - 1].background == false){
 		jobList[numberOfJobs - 1].running = false;
 		recentlyStopped = true;
-		printf("pid is (%i), jobL is (%i)\n", pid_ch1, jobList[numberOfJobs - 1].pid);
-		fflush(stdout);
 		kill(-pid_ch1, SIGTSTP);
 	}
 }
@@ -277,10 +279,14 @@ void getTokens(){
 	}
 	tokens[ctr] = NULL;
 
-	if(strcmp(tokens[0],"jobs") != 0 && strcmp(tokens[0], "fg") != 0 && strcmp(tokens[0], "bg") != 0){
-		createJob();
-	}
 	recentlyStopped = false;
+}
+
+void deleteTokens(){
+	int i;
+	for(i = 0; i < buffLength / 3; i++){
+		tokens[i] = 0;
+	}
 }
 
 //Used for debugging purposes. Displays tokens to the terminal
@@ -306,12 +312,14 @@ void shiftTokens(int place, int start){
 
 //redirects any input/output files as needed
 //removes redirect tokens for execvp later on
-void fileRedir(){
+int fileRedir(){
 	if(feof(stdin)){
 		exit(0);
 	}
 	int curr = 0; //current token
 	int changed = 0;
+	bool invalid = false;
+
 	while(tokens[curr] != NULL){
 		if(strcmp(tokens[curr], "<") == 0){ //file input
 			//check if file exists
@@ -323,6 +331,8 @@ void fileRedir(){
 			}else{
 				//doesn't exist
 				printf("Invalid file: %s\n", tokens[curr + 1]);
+				invalid = true;
+				break;
 			}
 			changed = 1;
 		}else if(strcmp(tokens[curr], ">") == 0){ //file output
@@ -343,6 +353,12 @@ void fileRedir(){
 			changed = 0;
 		}
 	}
+
+	if(invalid){
+		return -1;
+	}else{
+		return 1;
+	}
 }
 
 void reset(){
@@ -361,6 +377,8 @@ void copyTokens(char** dest, int start, int stop){
 	}
 	dest[ctr] = NULL;
 }
+
+//=================================================SHELL=============================================
 
 //the shell program
 int shell(){
@@ -452,8 +470,8 @@ int shell(){
 				setpgid(0, pid_ch1);	//child 2 joins group whose id is the same as child 1's pid
 				close(pipefd[1]);
 				dup2(pipefd[0], STDIN_FILENO);
-				char* args[buffLength / 10];
-				copyTokens(args, pipeLoc + 1, pipeLoc + 100);
+				char* args[buffLength / 5];
+				copyTokens(args, pipeLoc + 1, pipeLoc + 200);
 
 				int ret = execvp(args[0], args);
 				if(ret != 0){
@@ -528,7 +546,7 @@ int shell(){
 				}
 
 				//deletes completed/exited jobs
-				if(count >= 1 && strcmp(tokens[0], "jobs") != 0 && strcmp(tokens[0], "bg") != 0){
+				if(count == 1 && strcmp(tokens[0], "jobs") != 0 && strcmp(tokens[0], "bg") != 0){
 					deleteJob(proc);
 				}
 
@@ -555,13 +573,13 @@ int shell(){
 							//new group id will be process id
 		}
 
-		char* args[buffLength / 10];
+		char* args[buffLength / 5];
 		if(pipeLoc != 0){
 			close(pipefd[0]); //closes read end
 			dup2(pipefd[1], STDOUT_FILENO);
 			copyTokens(args, 0, pipeLoc - 1);
 		}else{
-			copyTokens(args, 0, buffLength / 10);
+			copyTokens(args, 0, buffLength / 5);
 		}
 
 		if(strcmp(tokens[0], "jobs") == 0){
@@ -579,7 +597,8 @@ int shell(){
 //runs the shell
 int main(void){
 	//setup
-	int status;
+	int status = 1;
+	int temp;
 	recentlyStopped = false;
 	deleteOverride = false;
 	if(signal(SIGCHLD, sigchld_handler) == SIG_ERR)
@@ -595,9 +614,14 @@ int main(void){
 
 	do{
 		getTokens();
-//		displayTokens();
-		fileRedir();			//file redirect first
-		status = shell();
+	//	displayTokens();
+		temp = fileRedir();			//file redirect first
+		if(temp > 0){
+			if(strcmp(tokens[0],"jobs") != 0 && strcmp(tokens[0], "fg") != 0 && strcmp(tokens[0], "bg") != 0){
+				createJob();
+			}
+			status = shell();
+		}
 		if(status != 1){
 			printf("something went wrong in shell\n");
 		}
